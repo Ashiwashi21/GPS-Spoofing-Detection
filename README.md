@@ -1,4 +1,5 @@
 GPS Spoofing Detection Project
+
 Problem Statement:
 How does a hybrid model of a Convolutional Neural Network (CNN) and an Extended Kalman Filter (EKF) compare to a CNN-only model when detecting GPS spoofing attacks accurately and efficiently?
 
