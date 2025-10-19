@@ -62,3 +62,4 @@ with serial.Serial('/dev/serial0', 9600, timeout=1) as ser, open(csv_path, "w", 
             ])
             csvfile.flush()
             gps_data = {k: "" for k in gps_data}
+
