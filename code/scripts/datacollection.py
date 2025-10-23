@@ -4,11 +4,13 @@ import csv
 from pathlib import Path
 from mpu6050.mpu6050 import mpu6050
 
-# ---------- FILE SETUP ----------
 csv_path = Path(__file__).parent.parent.parent / "sensor-data" / "normal" / "normal.csv"
-csv_path.parent.mkdir(parents=True, exist_ok=True)
 
-# ---------- GPS PARSERS ----------
+
+imu_sensor = mpu6050(0x68)
+
+ser = serial.Serial('/dev/serial0', 9600, timeout=1)
+
 def parse_gpgga(parts):
     return {
         "latitude": parts[2] + " " + parts[3],
@@ -24,76 +26,56 @@ def parse_gprmc(parts):
 def parse_gpgsa(parts):
     return {"pdop": parts[15], "vdop": parts[16]}
 
-# ---------- GPS FUNCTION ----------
-def get_gps_data(ser):
-    gps_data = {k: "" for k in ["latitude", "longitude", "altitude_m", "satellites", "hdop", "speed_knots", "pdop", "vdop"]}
-    try:
-        line = ser.readline().decode("utf-8").strip()
-        if not line:
-            return gps_data
+with open(csv_path, "w", newline="") as csvfile:
+    writer = csv.writer(csvfile)
+    writer.writerow([
+        "timestamp", "latitude", "longitude", "altitude_m", "satellites", "hdop", 
+        "speed_knots", "pdop", "vdop", "accel_x", "accel_y", "accel_z", 
+        "gyro_x", "gyro_y", "gyro_z", "temp"
+    ])
 
-        parts = line.split(",")
+    start_time = time.time()
+    duration = 5 * 60
+    gps_data = {k: "" for k in ["latitude", "longitude", "altitude_m", "satellites", 
+                                "hdop", "speed_knots", "pdop", "vdop"]}
+
+    while time.time() - start_time < duration:
+        try:
+            line = ser.readline().decode("utf-8").strip()
+        except UnicodeDecodeError:
+            continue
+
         if line.startswith("$GPGGA"):
+            parts = line.split(",")
             gps_data.update(parse_gpgga(parts))
         elif line.startswith("$GPRMC"):
+            parts = line.split(",")
             gps_data.update(parse_gprmc(parts))
         elif line.startswith("$GPGSA"):
+            parts = line.split(",")
             gps_data.update(parse_gpgsa(parts))
-    except Exception:
-        pass
-    return gps_data
 
-# ---------- IMU FUNCTION ----------
-def get_imu_data(sensor):
-    accel_data = sensor.get_accel_data()
-    gyro_data = sensor.get_gyro_data()
-    temp_data = sensor.get_temp()
+        accel_data = imu_sensor.get_accel_data()
+        gyro_data = imu_sensor.get_gyro_data()
+        temp_data = imu_sensor.get_temp()
 
-    return {
-        "accel_x": accel_data["x"],
-        "accel_y": accel_data["y"],
-        "accel_z": accel_data["z"],
-        "gyro_x": gyro_data["x"],
-        "gyro_y": gyro_data["y"],
-        "gyro_z": gyro_data["z"],
-        "temp": temp_data,
-    }
+        timestamp = int(time.time())
+        writer.writerow([
+            timestamp,
+            gps_data.get("latitude", ""),
+            gps_data.get("longitude", ""),
+            gps_data.get("altitude_m", ""),
+            gps_data.get("satellites", ""),
+            gps_data.get("hdop", ""),
+            gps_data.get("speed_knots", ""),
+            gps_data.get("pdop", ""),
+            gps_data.get("vdop", ""),
+            accel_data['x'], accel_data['y'], accel_data['z'],
+            gyro_data['x'], gyro_data['y'], gyro_data['z'],
+            temp_data
+        ])
+        csvfile.flush()
 
-# ---------- MAIN LOOP ----------
-def main(duration=1800):
-    print(f"Logging GPS + IMU for {duration} seconds...")
-    header = [
-        "timestamp",
-        "latitude", "longitude", "altitude_m", "satellites", "hdop", "speed_knots", "pdop", "vdop",
-        "accel_x", "accel_y", "accel_z", "gyro_x", "gyro_y", "gyro_z", "temp"
-    ]
+        gps_data = {k: "" for k in gps_data}
 
-    with serial.Serial('/dev/serial0', 9600, timeout=1) as ser, \
-         open(csv_path, "w", newline="") as csvfile:
-        
-        writer = csv.writer(csvfile)
-        writer.writerow(header)
-        sensor = mpu6050(0x68)
-        start = time.time()
-
-        while time.time() - start < duration:
-            gps_data = get_gps_data(ser)
-            imu_data = get_imu_data(sensor)
-            timestamp = int(time.time())
-
-            writer.writerow([
-                timestamp,
-                gps_data["latitude"], gps_data["longitude"], gps_data["altitude_m"],
-                gps_data["satellites"], gps_data["hdop"], gps_data["speed_knots"],
-                gps_data["pdop"], gps_data["vdop"],
-                imu_data["accel_x"], imu_data["accel_y"], imu_data["accel_z"],
-                imu_data["gyro_x"], imu_data["gyro_y"], imu_data["gyro_z"], imu_data["temp"]
-            ])
-            csvfile.flush()
-            time.sleep(1)
-
-    print(f"Done. Data saved to: {csv_path}")
-
-# ---------- RUN ----------
-if __name__ == "__main__":
-    main(1800)  # change to 1800 for 30 minutes
+        time.sleep(1)
