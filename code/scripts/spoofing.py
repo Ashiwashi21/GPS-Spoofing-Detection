@@ -4,7 +4,7 @@ from pathlib import Path
 
 np.random.seed(42)
 
-src = Path("sensor-data/normal/normal_clean.csv")
+src = Path("sensor-data/normal/normal.csv")
 spoof_dir = Path("sensor-data/spoofed")
 spoof_dir.mkdir(parents=True, exist_ok=True)
 out_path = spoof_dir / "spoofed.csv"
