@@ -83,7 +83,9 @@ dx_normal, dy_normal = latlon_to_meters(merged["lat_decimal_normal"], merged["lo
 
 merged["lat_disp_m"] = (merged["lat_decimal"] - merged["lat_decimal_normal"]) * 111320.0
 merged["lon_disp_m"] = (merged["lon_decimal"] - merged["lon_decimal_normal"]) * (111320.0 * np.cos(np.deg2rad(ref_lat)))
-t = (merged["timestamp"] - merged["timestamp"].iloc[0]).fillna(merged.index)
+t = merged["timestamp"] - merged["timestamp"].iloc[0]
+t = t.fillna(pd.Series(range(len(merged))))
+
 
 # FIGURE 1: left = placement map, right = displacement vs time
 fig, axes = plt.subplots(1,2, figsize=(16,8))
@@ -98,6 +100,9 @@ ax.set_xlabel("meters east of ref")
 ax.set_ylabel("meters north of ref")
 ax.legend()
 
+ax.grid(True, linestyle="--", alpha=0.5)
+
+
 ax2 = axes[1]
 ax2.plot(t, merged["lat_disp_m"].fillna(0), label="lat displacement (m)")
 ax2.plot(t, merged["lon_disp_m"].fillna(0), label="lon displacement (m)")
@@ -106,6 +111,7 @@ ax2.set_xlabel("seconds since start")
 ax2.set_ylabel("displacement (meters)")
 ax2.legend()
 ax2.grid(True)
+ax2.grid(True, linestyle="--", alpha=0.5)
 
 fig.tight_layout()
 fig_path = out_dir / "placement_and_displacement.png"
@@ -152,7 +158,10 @@ df["y_center"] = ys
 fig2, ax = plt.subplots(figsize=(9,9))
 ax.set_aspect("equal", "box")
 ax.set_title("Circle plot centered on mean normal position. Start black, end white.")
-ax.axis("off")
+ax.set_xlabel("Meters east of center")
+ax.set_ylabel("Meters north of center")
+ax.grid(True, linestyle="--", alpha=0.4)
+
 
 r = max(np.abs(df[["x_center","y_center"]]).max()) * 1.15
 circ = plt.Circle((0,0), r, edgecolor="0.7", facecolor="none", linewidth=0.6)
