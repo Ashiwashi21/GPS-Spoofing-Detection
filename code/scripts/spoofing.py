@@ -9,7 +9,6 @@ spoof_dir = Path("sensor-data/spoofed")
 spoof_dir.mkdir(parents=True, exist_ok=True)
 out_path = spoof_dir / "spoofed.csv"
 
-
 def nmea_to_decimal(val):
     if pd.isna(val) or not val:
         return np.nan
@@ -25,7 +24,6 @@ def nmea_to_decimal(val):
     except Exception:
         return np.nan
 
-
 def decimal_to_nmea(dec, lat=True):
     if pd.isna(dec):
         return ""
@@ -38,12 +36,10 @@ def decimal_to_nmea(dec, lat=True):
     mins = (dec - deg) * 60
     return f"{deg * 100 + mins:08.5f} {sign}"
 
-
 def latlon_to_meters(lat, lon, ref_lat, ref_lon):
     m_per_lat = 111320.0
     m_per_lon = 111320.0 * np.cos(np.deg2rad(ref_lat))
     return (lon - ref_lon) * m_per_lon, (lat - ref_lat) * m_per_lat
-
 
 def meters_to_latlon(dx, dy, ref_lat, ref_lon):
     m_per_lat = 111320.0
@@ -51,7 +47,6 @@ def meters_to_latlon(dx, dy, ref_lat, ref_lon):
     lat = ref_lat + dy / m_per_lat
     lon = ref_lon + dx / m_per_lon
     return lat, lon
-
 
 def inject_slow_drift(df, idx_list, drift_rate):
     for n, idx in enumerate(idx_list):
@@ -66,7 +61,6 @@ def inject_slow_drift(df, idx_list, drift_rate):
         df.at[idx, "lon_decimal"] = new_lon
         df.at[idx, "latitude"] = decimal_to_nmea(new_lat, True)
         df.at[idx, "longitude"] = decimal_to_nmea(new_lon, False)
-
 
 def inject_sophisticated(df, idx_list, offset_m):
     direction = np.random.rand() * 2 * np.pi
@@ -85,7 +79,6 @@ def inject_sophisticated(df, idx_list, offset_m):
         df.at[idx, "lon_decimal"] = lon
         df.at[idx, "latitude"] = decimal_to_nmea(lat, True)
         df.at[idx, "longitude"] = decimal_to_nmea(lon, False)
-
 
 if not src.exists():
     raise FileNotFoundError(f"Expected input file at {src}")
@@ -114,33 +107,34 @@ df["x_m"], df["y_m"] = zip(*coords)
 
 df["label"] = 0
 start = df["timestamp"].iloc[0]
-df["minute_idx"] = ((df["timestamp"] - start) // 60).astype(int)
+df["tensec_idx"] = ((df["timestamp"] - start) // 10).astype(int)
 
-minutes = sorted(df["minute_idx"].unique())
+tensecs = sorted(df["tensec_idx"].unique())
 attacks = ["slow_drift", "sophisticated"]
 tags = []
 
-for m in minutes:
+for t in tensecs:
     attack_type = np.random.choice(attacks)
-    group = df.index[df["minute_idx"] == m].tolist()
+    group = df.index[df["tensec_idx"] == t].tolist()
     if not group:
         continue
     total = len(group)
-    dur = int(np.clip(np.random.randint(5, 31), 1, total))
+    max_dur = min(10, total)
+    dur = int(np.clip(np.random.randint(1, max_dur + 1), 1, total))
     start_offset = np.random.randint(0, max(1, total - dur + 1))
     target_rows = group[start_offset:start_offset + dur]
     if attack_type == "slow_drift":
         drift = float(np.random.uniform(0.2, 2.0))
         inject_slow_drift(df, target_rows, drift)
-        tag = f"{m}_drift_{drift:.2f}mps_{start_offset}s_{dur}s"
+        tag = f"tensec{t}_drift_{drift:.2f}mps_{start_offset}s_{dur}s"
     else:
         offset = float(np.random.uniform(5.0, 50.0))
         inject_sophisticated(df, target_rows, offset)
-        tag = f"{m}_soph_{int(offset)}m_{start_offset}s_{dur}s"
+        tag = f"tensec{t}_soph_{int(offset)}m_{start_offset}s_{dur}s"
     df.loc[target_rows, "label"] = 1
     tags.append(tag)
 
-df.drop(columns=["minute_idx"]).to_csv(out_path, index=False)
+df.drop(columns=["tensec_idx"]).to_csv(out_path, index=False)
 
 print(f"Spoofed dataset saved to {out_path}")
 print("Injected attack segments:")
