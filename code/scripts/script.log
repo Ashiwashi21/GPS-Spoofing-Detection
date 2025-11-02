@@ -1,0 +1,18 @@
+Traceback (most recent call last):
+  File "/home/pi/GPS-Spoofing-Detection/code/scripts/datacollection.py", line 42, in <module>
+    line = ser.readline().decode("utf-8", errors="ignore").strip()
+           ~~~~~~~~~~~~^^
+  File "/home/pi/GPS-Spoofing-Detection/myvenv/lib/python3.13/site-packages/serial/serialposix.py", line 595, in read
+    raise SerialException(
+        'device reports readiness to read but returned no data '
+        '(device disconnected or multiple access on port?)')
+serial.serialutil.SerialException: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+Traceback (most recent call last):
+  File "/home/pi/GPS-Spoofing-Detection/code/scripts/datacollection.py", line 42, in <module>
+    line = ser.readline().decode("utf-8", errors="ignore").strip()
+           ~~~~~~~~~~~~^^
+  File "/home/pi/GPS-Spoofing-Detection/myvenv/lib/python3.13/site-packages/serial/serialposix.py", line 595, in read
+    raise SerialException(
+        'device reports readiness to read but returned no data '
+        '(device disconnected or multiple access on port?)')
+serial.serialutil.SerialException: device reports readiness to read but returned no data (device disconnected or multiple access on port?)

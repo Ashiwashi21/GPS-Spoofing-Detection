@@ -1,8 +1,12 @@
 import serial, time, csv
 from pathlib import Path
 from mpu6050.mpu6050 import mpu6050
+from datetime import datetime
 
-csv_path = Path(__file__).parent.parent.parent / "sensor-data" / "normal" / "normal.csv"
+timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+csv_path = Path(__file__).parent.parent.parent / "sensor-data" / "normal" / f"normal_{timestamp_str}.csv"
+
+
 imu_sensor = mpu6050(0x68)
 ser = serial.Serial("/dev/serial0", 9600, timeout=1)
 
@@ -34,7 +38,7 @@ with open(csv_path, "w", newline="") as csvfile:
     start = time.time()
     gps = {k: "" for k in ["latitude","longitude","altitude_m","satellites","hdop","speed_knots","pdop","vdop"]}
 
-    while time.time() - start < 3600:
+    while time.time() - start < 5400:
         line = ser.readline().decode("utf-8", errors="ignore").strip()
         if line.startswith("$GPGGA"):
             gps.update(parse_gpgga(line.split(",")))
