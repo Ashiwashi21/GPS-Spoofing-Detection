@@ -85,5 +85,5 @@ df = df.dropna(subset=["lat_decimal", "lon_decimal"])
 
 m = folium.Map(location=[df.lat_decimal.mean(), df.lon_decimal.mean()], zoom_start=14)
 folium.PolyLine(df[["lat_decimal", "lon_decimal"]].values, color="blue", weight=2.5).add_to(m)
-m.save("/home/pi/GPS-Spoofing-Detection/sensor-data/visuals/gps_path.html")
+m.save("/home/pi/GPS-Spoofing-Detection/sensor-data/processed/gps_path.html")
 
