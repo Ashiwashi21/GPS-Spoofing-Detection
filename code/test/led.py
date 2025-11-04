@@ -6,7 +6,7 @@ led = LED(17)
 
 print("Starting LED test...")
 
-for i in range(20):
+for i in range(50):
     led.on()
     print(f"Cycle {i+1}: LED ON")
     time.sleep(0.3)
