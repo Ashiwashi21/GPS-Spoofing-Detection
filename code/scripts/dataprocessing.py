@@ -55,7 +55,7 @@ X = []
 y = []
 
 for seg_id, group in df.groupby("segment_id"):
-    group_numeric = group.drop(columns=["label", "segment_id", "latitude", "longitude"])
+    group_numeric = group.drop(columns=["label", "segment_id"])
     if len(group_numeric) < window_size:
         continue
     mat = group_numeric.iloc[:window_size].values.astype(float)
