@@ -1,71 +1,95 @@
 import numpy as np
-import time
-import glob
+import os
 import csv
+import time
+import matplotlib.pyplot as plt
 from tensorflow.keras.models import load_model
-from sklearn.metrics import f1_score, accuracy_score, confusion_matrix
-from gpiozero import LED
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 
+# -------------------------------
+# Load model and test data
+# -------------------------------
 model = load_model("models/cnn.keras")
-led = LED(17)
+X_test = np.load("sensor-data/processed/X_test.npy")
+y_test = np.load("sensor-data/processed/y_test.npy")
 
-X_files = sorted(glob.glob("sensor-data/testing/x_*.npy"))
-y_files = sorted(glob.glob("sensor-data/testing/y_*.npy"))
+# Pad to 18 features if needed
+pad_width = 18 - X_test.shape[2]
+if pad_width > 0:
+    padding = np.zeros((X_test.shape[0], X_test.shape[1], pad_width))
+    X_test = np.concatenate([X_test, padding], axis=2)
 
-y_true = []
-y_pred = []
-detection_times = []
+# -------------------------------
+# Scale features using training data
+# -------------------------------
+X_train = np.load("sensor-data/processed/X_train.npy")
+pad_width = 18 - X_train.shape[2]
+if pad_width > 0:
+    padding = np.zeros((X_train.shape[0], X_train.shape[1], pad_width))
+    X_train = np.concatenate([X_train, padding], axis=2)
 
-def pad_features(x, target_dim=18):
-    pad_width = target_dim - x.shape[1]
-    if pad_width > 0:
-        padding = np.zeros((x.shape[0], pad_width))
-        x = np.concatenate([x, padding], axis=1)
-    return x
+scaler = StandardScaler()
+scaler.fit(X_train.reshape(-1, 18))
+X_test_scaled = scaler.transform(X_test.reshape(-1, 18)).reshape(X_test.shape)
 
-def flash_led():
-    for _ in range(5):
-        led.on()
-        time.sleep(0.1)
-        led.off()
-        time.sleep(0.1)
+# -------------------------------
+# Print model summary
+# -------------------------------
+print("\n?? CNN Model Summary:")
+model.summary()
 
-with open("sensor-data/testing/test_log.csv", "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["case_number", "true_label", "predicted_label", "detection_time_seconds", "result"])
+# -------------------------------
+# Visualize first Conv1D kernel
+# -------------------------------
+print("\n?? Visualizing first Conv1D layer weights...")
+weights = model.layers[0].get_weights()[0]  # shape: (kernel_size, input_dim, filters)
+plt.figure(figsize=(10, 4))
+plt.imshow(weights[:, :, 0], aspect='auto', cmap='viridis')
+plt.colorbar()
+plt.title("Conv1D Layer 1 - Filter 0 Weights")
+plt.xlabel("Input Feature")
+plt.ylabel("Kernel Position")
+plt.tight_layout()
+plt.show()
 
-    for i, (x_path, y_path) in enumerate(zip(X_files, y_files)):
-        x = np.load(x_path)
-        x = pad_features(x)
-        y = np.load(y_path)[0]
-        start = time.time()
-        pred = model.predict(np.expand_dims(x, axis=0))[0][0]
-        end = time.time()
-        label = int(pred > 0.5)
-        y_true.append(y)
-        y_pred.append(label)
-        detection_times.append(end - start)
+# -------------------------------
+# Predict and evaluate
+# -------------------------------
+start = time.time()
+y_scores = model.predict(X_test_scaled, verbose=0).flatten()
+end = time.time()
 
-        print(f"\nTesting case {i+1}:")
-        if label == 0:
-            print("normal")
-        else:
-            print("spoofed")
-            flash_led()
+y_pred = (y_scores > 0.5).astype(int)
+detection_times = [(end - start) / len(y_test)] * len(y_test)
 
-        print(f"Prediction: {label}, Actual: {y}")
-        print(f"Detection time: {end - start:.4f} seconds")
-
-        result = "normal" if label == 0 else "spoofed"
-        writer.writerow([i+1, y, label, round(end - start, 4), result])
-
-f1 = f1_score(y_true, y_pred)
-acc = accuracy_score(y_true, y_pred)
-cm = confusion_matrix(y_true, y_pred)
+f1 = f1_score(y_test, y_pred)
+acc = accuracy_score(y_test, y_pred)
+cm = confusion_matrix(y_test, y_pred)
 std_dev = np.std(detection_times)
 
-print("\n--- Final Metrics ---")
+# -------------------------------
+# Print metrics
+# -------------------------------
+print("\n? Evaluation Complete")
 print(f"F1 Score: {f1:.4f}")
 print(f"Accuracy: {acc:.4f}")
 print(f"Confusion Matrix:\n{cm}")
 print(f"Detection Time Std Dev: {std_dev:.4f} seconds")
+
+# -------------------------------
+# Save log to results folder
+# -------------------------------
+os.makedirs("results", exist_ok=True)
+with open("results/cnn_test_log.csv", "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["case_number", "true_label", "predicted_label", "detection_time_seconds", "result"])
+    for i, (yt, yp, dt) in enumerate(zip(y_test, y_pred, detection_times)):
+        writer.writerow([i+1, yt, yp, round(dt, 4), "spoofed" if yp else "normal"])
+    writer.writerow([])
+    writer.writerow(["Summary"])
+    writer.writerow(["F1 Score", round(f1, 4)])
+    writer.writerow(["Accuracy", round(acc, 4)])
+    writer.writerow(["Detection Time Std Dev", round(std_dev, 4)])
+    writer.writerow(["Confusion Matrix"])
+    writer.writerows(cm)

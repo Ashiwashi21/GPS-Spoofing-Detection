@@ -2,10 +2,10 @@ import pandas as pd
 import folium
 from pathlib import Path
 
-# Load your CSV
+# Load the synthesized GPS data
 df = pd.read_csv("/home/pi/GPS-Spoofing-Detection/sensor-data/normal/normal.csv")
 
-# Check that we have valid numeric GPS data
+# Clean GPS data
 df = df.dropna(subset=["latitude", "longitude"])
 df = df[(df["latitude"] != 0) & (df["longitude"] != 0)]
 
@@ -16,7 +16,18 @@ if df.empty:
 start_coords = [df["latitude"].mean(), df["longitude"].mean()]
 m = folium.Map(location=start_coords, zoom_start=15)
 
-# Draw the path
+# Draw the path with popups for altitude and speed
+for i, row in df.iterrows():
+    folium.CircleMarker(
+        location=[row["latitude"], row["longitude"]],
+        radius=3,
+        color="blue",
+        fill=True,
+        fill_opacity=0.7,
+        popup=f"Altitude: {row['altitude']} m<br>Speed: {row['speed_knots']} knots"
+    ).add_to(m)
+
+# Draw polyline path
 folium.PolyLine(
     df[["latitude", "longitude"]].values,
     color="blue",
@@ -24,7 +35,7 @@ folium.PolyLine(
     opacity=0.8
 ).add_to(m)
 
-# Optional: mark the start and end points
+# Mark start and end points
 folium.Marker(
     location=[df["latitude"].iloc[0], df["longitude"].iloc[0]],
     popup="Start",
@@ -42,4 +53,4 @@ out_path = Path("/home/pi/GPS-Spoofing-Detection/sensor-data/visuals/gps_path.ht
 out_path.parent.mkdir(parents=True, exist_ok=True)
 m.save(out_path)
 
-print(f"Saved map to: {out_path}")
+print(f"? Saved GPS map to: {out_path}")
