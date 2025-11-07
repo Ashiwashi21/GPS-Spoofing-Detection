@@ -1,32 +1,42 @@
 import numpy as np
 import os
 import csv
+import io
+from contextlib import redirect_stdout
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout, BatchNormalization, GaussianNoise
+from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout, BatchNormalization
+from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.preprocessing import StandardScaler
 from ekf import ExtendedKalmanFilter
 
 # -------------------------------
-# Load and scale training data
+# Load training data
 # -------------------------------
 X_train = np.load("sensor-data/processed/X_train.npy")
 y_train = np.load("sensor-data/processed/y_train.npy")
 
-n_samples, timesteps, n_features = X_train.shape
-scaler = StandardScaler()
+# Pad to 18 features if needed
+pad_width = 18 - X_train.shape[2]
+if pad_width > 0:
+    padding = np.zeros((X_train.shape[0], X_train.shape[1], pad_width))
+    X_train = np.concatenate([X_train, padding], axis=2)
 
-X_train_flat = X_train.reshape(-1, n_features)
-X_train_scaled = scaler.fit_transform(X_train_flat).reshape(n_samples, timesteps, n_features)
+# -------------------------------
+# Scale features
+# -------------------------------
+scaler = StandardScaler()
+X_train_flat = X_train.reshape(-1, 18)
+X_train_scaled = scaler.fit_transform(X_train_flat).reshape(X_train.shape)
 
 # -------------------------------
 # EKF Setup
 # -------------------------------
-F = np.eye(n_features)
-H = np.eye(n_features)
-Q = np.eye(n_features) * 0.01
-R = np.eye(n_features) * 0.1
-x0 = np.zeros(n_features)
-P0 = np.eye(n_features)
+F = np.eye(18)
+H = np.eye(18)
+Q = np.eye(18) * 0.01
+R = np.eye(18) * 0.1
+x0 = np.zeros(18)
+P0 = np.eye(18)
 
 ekf = ExtendedKalmanFilter(F, H, Q, R, x0, P0)
 
@@ -36,39 +46,37 @@ def apply_ekf_batch(X):
 X_train_ekf = apply_ekf_batch(X_train_scaled)
 
 # -------------------------------
-# Combine features (no noise)
+# Combine EKF features
 # -------------------------------
 X_train_combined = np.concatenate([X_train_scaled, X_train_ekf], axis=-1)
 
 # -------------------------------
-# Build Hybrid CNN
+# Build CNN model (same as original)
 # -------------------------------
 model = Sequential([
-    GaussianNoise(0.05, input_shape=(timesteps, X_train_combined.shape[2])),
-    Conv1D(filters=16, kernel_size=2, activation='relu'),
+    Conv1D(32, 3, activation='relu', input_shape=(10, X_train_combined.shape[2])),
     BatchNormalization(),
-    MaxPooling1D(pool_size=2),
-    Dropout(0.4),
-    Conv1D(filters=32, kernel_size=2, activation='relu'),
-    BatchNormalization(),
-    MaxPooling1D(pool_size=2),
-    Dropout(0.4),
+    MaxPooling1D(2),
+    Dropout(0.3),
     Flatten(),
     Dense(32, activation='relu'),
-    Dropout(0.5),
+    Dropout(0.3),
     Dense(1, activation='sigmoid')
 ])
 
 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
 # -------------------------------
-# Train
+# Train model
 # -------------------------------
+early_stop = EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)
+
 history = model.fit(
     X_train_combined, y_train,
-    epochs=25,
-    batch_size=16,
+    epochs=10,
+    batch_size=32,
     validation_split=0.2,
+    callbacks=[early_stop],
     verbose=1
 )
 
@@ -77,7 +85,13 @@ history = model.fit(
 # -------------------------------
 os.makedirs("models", exist_ok=True)
 model.save("models/hybrid.keras")
-print("? Hybrid model saved to models/hybrid.keras")
+print("? EKF-enhanced CNN model saved to models/cnn_ekf.keras")
+
+# -------------------------------
+# Print final training accuracy
+# -------------------------------
+final_acc = history.history["accuracy"][-1]
+print(f"? Final training accuracy: {round(final_acc * 100, 2)}%")
 
 # -------------------------------
 # Save training history
@@ -96,20 +110,13 @@ with open("results/hybrid_training_log.csv", "w", newline="") as f:
         ])
 
 # -------------------------------
-# Save model architecture
+# Save model architecture summary
 # -------------------------------
 with open("results/hybrid_architecture.csv", "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["Layer Name", "Layer Type", "Output Shape", "Param #"])
-    for layer in model.layers:
-        name = layer.name
-        layer_type = layer.__class__.__name__
-        output_shape = str(layer.output_shape)
-        param_count = layer.count_params()
-        writer.writerow([name, layer_type, output_shape, param_count])
+    with io.StringIO() as buf, redirect_stdout(buf):
+        model.summary()
+        summary_text = buf.getvalue()
+        for line in summary_text.strip().split("\n"):
+            f.write(line + "\n")
 
-    writer.writerow([])
-    writer.writerow(["Total Params", model.count_params()])
-    writer.writerow(["Trainable Params", np.sum([np.prod(w.shape) for w in model.trainable_weights])])
-    writer.writerow(["Non-trainable Params", np.sum([np.prod(w.shape) for w in model.non_trainable_weights])])
-    writer.writerow(["Optimizer Params", np.sum([np.prod(w.shape) for w in model.optimizer.weights])])
+print("? Saved architecture and training log to results/")

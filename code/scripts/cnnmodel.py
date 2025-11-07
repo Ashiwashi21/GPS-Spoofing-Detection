@@ -1,8 +1,12 @@
 import numpy as np
+import os
+import csv
+import io
+from contextlib import redirect_stdout
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout, BatchNormalization
-from sklearn.preprocessing import StandardScaler
 from tensorflow.keras.callbacks import EarlyStopping
+from sklearn.preprocessing import StandardScaler
 
 # -------------------------------
 # Load training data
@@ -46,8 +50,8 @@ early_stop = EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=
 
 history = model.fit(
     X_train_scaled, y_train,
-    epochs=10,                # reduced from 25
-    batch_size=32,            # increased from 8
+    epochs=10,
+    batch_size=32,
     validation_split=0.2,
     callbacks=[early_stop],
     verbose=1
@@ -56,10 +60,15 @@ history = model.fit(
 # -------------------------------
 # Save model
 # -------------------------------
+os.makedirs("models", exist_ok=True)
 model.save("models/cnn.keras")
 print("? CNN model saved to models/cnn.keras")
-import csv
-import os
+
+# -------------------------------
+# Print final accuracy
+# -------------------------------
+final_acc = history.history["accuracy"][-1]
+print(f"? Final training accuracy: {round(final_acc * 100, 2)}%")
 
 # -------------------------------
 # Save training history to table
@@ -76,19 +85,13 @@ with open("results/cnn_training_log.csv", "w", newline="") as f:
             round(history.history["val_accuracy"][i], 4),
             round(history.history["val_loss"][i], 4)
         ])
-os.makedirs("results", exist_ok=True)
-with open("results/cnn_architecture.csv", "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["Layer Name", "Layer Type", "Output Shape", "Param #"])
-    for layer in model.layers:
-        name = layer.name
-        layer_type = layer.__class__.__name__
-        output_shape = str(layer.output_shape)
-        param_count = layer.count_params()
-        writer.writerow([name, layer_type, output_shape, param_count])
 
-    writer.writerow([])
-    writer.writerow(["Total Params", model.count_params()])
-    writer.writerow(["Trainable Params", np.sum([np.prod(w.shape) for w in model.trainable_weights])])
-    writer.writerow(["Non-trainable Params", np.sum([np.prod(w.shape) for w in model.non_trainable_weights])])
-    writer.writerow(["Optimizer Params", np.sum([np.prod(w.shape) for w in model.optimizer.weights])])
+# -------------------------------
+# Save model architecture summary
+# -------------------------------
+with open("results/cnn_architecture.csv", "w", newline="") as f:
+    with io.StringIO() as buf, redirect_stdout(buf):
+        model.summary()
+        summary_text = buf.getvalue()
+        for line in summary_text.strip().split("\n"):
+            f.write(line + "\n")
