@@ -1,45 +1,58 @@
+import pandas as pd
 import numpy as np
-from tensorflow.keras.models import load_model
 import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+from sklearn.preprocessing import StandardScaler
 
-# Load model
-model = load_model("models/cnn.keras")
-print("\n? Model loaded successfully.")
+# Load data
+normal_df = pd.read_csv("sensor-data/normal/normal.csv")
+spoofed_df = pd.read_csv("sensor-data/spoofed/spoofed.csv")
 
-# Show model summary
-print("\n?? Model Summary:")
-model.summary()
+# Select features
+features = ["accel_x", "accel_y", "accel_z", "gyro_x", "gyro_y", "gyro_z"]
+X_normal = normal_df[features].values
+X_spoofed = spoofed_df[features].values
 
-# Check input shape
-expected_input_shape = model.input_shape
-print(f"\n?? Expected input shape: {expected_input_shape}")
+# Stack and label
+X = np.vstack([X_normal, X_spoofed])
+y = np.array([0] * len(X_normal) + [1] * len(X_spoofed))
 
-# Load training sample to test prediction
+# Downsample for speed
+sample_size = 3000
+idx = np.random.choice(len(X), sample_size, replace=False)
+X_sample = X[idx]
+y_sample = y[idx]
+
+# Normalize
+X_scaled = StandardScaler().fit_transform(X_sample)
+
+# Run t-SNE
+tsne = TSNE(n_components=2, perplexity=15, random_state=42)
+X_embedded = tsne.fit_transform(X_scaled)
+
+# Plot
+plt.figure(figsize=(10, 6))
+plt.scatter(X_embedded[y_sample == 0, 0], X_embedded[y_sample == 0, 1], alpha=0.5, label="Normal", s=10)
+plt.scatter(X_embedded[y_sample == 1, 0], X_embedded[y_sample == 1, 1], alpha=0.5, label="Spoofed", s=10)
+plt.title("t-SNE Embedding of Normal vs Spoofed Samples (Downsampled)")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+import numpy as np
+
+import numpy as np
+from scipy.stats import pearsonr
+
 X_train = np.load("sensor-data/processed/X_train.npy")
 y_train = np.load("sensor-data/processed/y_train.npy")
 
-# Pad to 18 features if needed
-pad_width = 18 - X_train.shape[2]
-if pad_width > 0:
-    padding = np.zeros((X_train.shape[0], X_train.shape[1], pad_width))
-    X_train = np.concatenate([X_train, padding], axis=2)
+corrs = []
+for i in range(X_train.shape[2]):
+    feature_flat = X_train[:, :, i].flatten()
+    y_repeated = np.repeat(y_train, X_train.shape[1])
+    r, _ = pearsonr(feature_flat, y_repeated)
+    corrs.append(abs(r))
 
-# Predict on first 10 samples
-print("\n?? Sample Predictions:")
-for i in range(10):
-    sample = X_train[i].reshape(1, X_train.shape[1], X_train.shape[2])
-    score = model.predict(sample, verbose=0)[0][0]
-    label = int(score > 0.5)
-    print(f"Sample {i+1}: True = {y_train[i]}, Predicted = {label}, Score = {score:.4f}")
-
-# Visualize weights of first Conv1D layer
-print("\n?? Visualizing weights of first Conv1D layer...")
-weights = model.layers[0].get_weights()[0]  # shape: (kernel_size, input_dim, filters)
-plt.figure(figsize=(10, 4))
-plt.imshow(weights[:, :, 0], aspect='auto', cmap='viridis')
-plt.colorbar()
-plt.title("Conv1D Layer 1 - Filter 0 Weights")
-plt.xlabel("Input Feature")
-plt.ylabel("Kernel Position")
-plt.tight_layout()
-plt.show()
+print("Top correlated features:", np.argsort(corrs)[-5:][::-1])
+print("Correlation values:", np.sort(corrs)[-5:][::-1])

@@ -1,102 +1,87 @@
-import math
 import numpy as np
 import pandas as pd
-from pathlib import Path
+import os
 
-R_EARTH = 6371000.0  # meters
+# --- Setup ---
+np.random.seed(42)
+os.makedirs("sensor-data/spoofed", exist_ok=True)
 
-# ---------- GPS HELPERS ----------
+# Load real normal data
+normal_df = pd.read_csv("sensor-data/normal/normal.csv")
+num_rows = len(normal_df)
+spoofed_df = normal_df.copy()
 
-def meters_to_latlon(dx, dy, lat0):
-    dlat = dy / R_EARTH
-    dlon = dx / (R_EARTH * math.cos(math.radians(lat0)))
-    return math.degrees(dlat), math.degrees(dlon)
+# --- IMU Spoofing ---
+# ? Original synthetic accel generation (too unrealistic)
+# accel_base = np.random.normal(0, 2.5, size=(num_rows, 3))
 
-def generate_spoofed_gps_path(n_rows, timestamps, start_lat, start_lon, base_alt=300.0, avg_speed=1.3):
-    lat = np.zeros(n_rows)
-    lon = np.zeros(n_rows)
-    alt = np.zeros(n_rows)
-    speed_knots = np.zeros(n_rows)
-    lat[0], lon[0], alt[0] = start_lat, start_lon, base_alt
-    heading = np.random.uniform(0, 2 * math.pi)
+# ? Fix: use real accel data and inject subtle drift + jitter into segments
+accel_spoofed = spoofed_df[["accel_x", "accel_y", "accel_z"]].values.copy()
+accel_indices = np.random.choice(num_rows, size=int(0.2 * num_rows), replace=False)
+accel_drift = np.random.normal(0, 0.5, size=(len(accel_indices), 3))
+accel_jitter = np.random.normal(0, 0.2, size=(len(accel_indices), 3))
+accel_spoofed[accel_indices] += accel_drift + accel_jitter
+accel_spoofed = np.clip(accel_spoofed, -12, 12)
 
-    for i in range(1, n_rows):
-        dt = max(1.0, timestamps[i] - timestamps[i - 1])
-        speed = np.random.normal(avg_speed, 0.2)
+# ? Original synthetic gyro generation (too high variance)
+# gyro_base = np.random.normal(0, 10, size=(num_rows, 3))
 
-        # Inject subtle spoofing: fake loops, drift, and burst speed
-        if np.random.rand() < 0.1:
-            heading += math.radians(np.random.uniform(-90, 90))
-            speed *= np.random.uniform(1.5, 3.0)
+# ? Fix: use real gyro data and inject smooth lag + jitter per axis
+gyro_spoofed = spoofed_df[["gyro_x", "gyro_y", "gyro_z"]].values.copy()
+gyro_indices = np.random.choice(num_rows, size=int(0.2 * num_rows), replace=False)
+for i in range(3):
+    lag = np.convolve(np.random.normal(0, 1, len(gyro_indices)), np.ones(10)/10, mode='same')
+    jitter = np.random.normal(0, 1.0, size=len(gyro_indices))
+    gyro_spoofed[gyro_indices, i] += lag + jitter
+gyro_spoofed = np.clip(gyro_spoofed, -50, 50)
 
-        heading += math.radians(np.random.normal(0, 2))
-        dist = speed * dt
-        dx = math.sin(heading) * dist
-        dy = math.cos(heading) * dist
-        dlat, dlon = meters_to_latlon(dx, dy, lat[i - 1])
+# --- GPS Spoofing ---
+# ? Original sinusoidal drift (too clean and predictable)
+# lat_drift = 0.0003 * np.sin(np.linspace(0, 12 * np.pi, num_rows))
+# lon_drift = 0.0003 * np.cos(np.linspace(0, 12 * np.pi, num_rows))
 
-        lat[i] = lat[i - 1] + dlat + np.random.normal(0, 0.0003)
-        lon[i] = lon[i - 1] + dlon + np.random.normal(0, 0.0003)
-        alt[i] = base_alt + np.random.normal(0, 2.0)
-        speed_knots[i] = speed / 0.514444
-    return lat, lon, alt, speed_knots
+# ? Fix: random walk + jitter for realistic GPS drift
+lat_spoofed = spoofed_df["latitude"].values.copy()
+lon_spoofed = spoofed_df["longitude"].values.copy()
+gps_indices = np.random.choice(num_rows, size=int(0.2 * num_rows), replace=False)
+lat_noise = np.cumsum(np.random.normal(0, 0.00005, size=len(gps_indices)))
+lon_noise = np.cumsum(np.random.normal(0, 0.00005, size=len(gps_indices)))
+lat_spoofed[gps_indices] += lat_noise
+lon_spoofed[gps_indices] += lon_noise
 
-# ---------- IMU SPOOFING ----------
+# ? Original synthetic altitude base
+# alt_base = 300 + np.random.normal(0, 0.5, size=num_rows)
 
-def generate_spoofed_imu(seq, n_augments=15):
-    augmented = []
-    for _ in range(n_augments):
-        noise = np.random.normal(0, [0.3, 0.3, 0.3, 1.2, 1.2, 1.2, 0.2], size=seq.shape)
-        drift = np.linspace(0, np.random.uniform(1.0, 3.0), seq.shape[1])
-        drift *= np.random.choice([-1, 1])
-        spoof_pattern = np.cos(np.linspace(0, np.pi * 2, seq.shape[1])) * np.random.uniform(0.3, 0.6)
+# ? Fix: use real altitude and perturb slightly
+alt_spoofed = spoofed_df["altitude"].values.copy()
+alt_indices = np.random.choice(num_rows, size=int(0.2 * num_rows), replace=False)
+alt_spoofed[alt_indices] += np.random.normal(0, 0.3, size=len(alt_indices))
+alt_spoofed = np.clip(alt_spoofed, 298.5, 301.5)
 
-        # Inject fake IMU consistency: match GPS heading but with hidden lag
-        lag = np.roll(spoof_pattern, shift=np.random.randint(1, 5))
-        spoofed_seq = seq + noise + drift + lag
-        augmented.append(spoofed_seq)
-    return np.array(augmented)
+# ? Speed spoofing: perturb real speed values
+speed_spoofed = spoofed_df["speed_knots"].values.copy()
+speed_indices = np.random.choice(num_rows, size=int(0.2 * num_rows), replace=False)
+speed_spoofed[speed_indices] += np.random.normal(0, 0.5, size=len(speed_indices))
+speed_spoofed = np.clip(speed_spoofed, 0.5, 4.5)
 
-# ---------- MAIN ----------
+# --- Combine and Save ---
+df_spoofed = pd.DataFrame({
+    "accel_x": accel_spoofed[:, 0],
+    "accel_y": accel_spoofed[:, 1],
+    "accel_z": accel_spoofed[:, 2],
+    "gyro_x": gyro_spoofed[:, 0],
+    "gyro_y": gyro_spoofed[:, 1],
+    "gyro_z": gyro_spoofed[:, 2],
+    "latitude": lat_spoofed,
+    "longitude": lon_spoofed,
+    "altitude": alt_spoofed,
+    "speed_knots": speed_spoofed
+})
 
-def main():
-    src = Path("sensor-data/spoofed/spoofed.csv")
-    df = pd.read_csv(src)
-    key_features = ["accel_x", "accel_y", "accel_z", "gyro_x", "gyro_y", "gyro_z", "temp"]
-    df = df[key_features].dropna().astype(float)
-    timestamps = np.arange(len(df)).astype(float)
+output_path = "sensor-data/spoofed/spoofed.csv"
+df_spoofed.to_csv(output_path, index=False)
 
-    # 1. Generate spoofed IMU data
-    all_aug = []
-    for _, row in df.iterrows():
-        seq = row.values.reshape(1, -1)
-        aug_rows = generate_spoofed_imu(seq, n_augments=15)
-        all_aug.append(aug_rows)
-    spoofed_imu = np.vstack(all_aug).reshape(-1, len(key_features))
-    imu_df = pd.DataFrame(spoofed_imu, columns=key_features)
+# --- Output Summary ---
+print(df_spoofed.head())
+print(f"\n? Spoofed data generated with {len(df_spoofed)} rows and saved to spoofed.csv")
 
-    # 2. Generate spoofed GPS path
-    start_lat, start_lon = 34.035, -84.125
-    n_rows = len(imu_df)
-    lat, lon, alt, speed = generate_spoofed_gps_path(n_rows, timestamps=np.arange(n_rows),
-                                                     start_lat=start_lat, start_lon=start_lon)
-
-    gps_df = pd.DataFrame({
-        "latitude": lat,
-        "longitude": lon,
-        "altitude": alt,
-        "speed_knots": speed
-    })
-
-    # 3. Combine IMU + GPS
-    full_df = pd.concat([imu_df, gps_df], axis=1)
-
-    out_path = Path("sensor-data/spoofed/spoofed.csv")
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    full_df.to_csv(out_path, index=False)
-
-    print(f"?? Generated {len(full_df)} spoofed rows -> {out_path}")
-    print(full_df.head())
-
-if __name__ == "__main__":
-    main()

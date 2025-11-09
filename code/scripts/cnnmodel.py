@@ -6,7 +6,10 @@ from contextlib import redirect_stdout
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout, BatchNormalization
 from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.regularizers import l2
+from tensorflow.keras.metrics import Precision, Recall
 from sklearn.preprocessing import StandardScaler
+import tensorflow.keras.backend as K
 
 # -------------------------------
 # Load training data
@@ -21,32 +24,63 @@ if pad_width > 0:
     X_train = np.concatenate([X_train, padding], axis=2)
 
 # -------------------------------
-# Scale features
+# Small label noise (5%)
+# -------------------------------
+noise_ratio = 0.05
+num_noisy = int(len(y_train) * noise_ratio)
+noisy_indices = np.random.choice(len(y_train), num_noisy, replace=False)
+y_train[noisy_indices] = 1 - y_train[noisy_indices]
+
+# -------------------------------
+# Scale + input noise augmentation
 # -------------------------------
 scaler = StandardScaler()
 X_train_flat = X_train.reshape(-1, 18)
 X_train_scaled = scaler.fit_transform(X_train_flat).reshape(X_train.shape)
 
+# Slightly higher Gaussian noise, minor amplitude variation
+noise = np.random.normal(0, 0.05, size=X_train_scaled.shape)
+scale = np.random.uniform(0.97, 1.03, size=(X_train_scaled.shape[0], 1, X_train_scaled.shape[2]))
+mask = np.random.binomial(1, 0.99, size=X_train_scaled.shape)  # 1% random feature dropout
+X_train_scaled = X_train_scaled * scale * mask + noise
+
 # -------------------------------
-# Build CNN model
+# Focal loss
+# -------------------------------
+def focal_loss(gamma=2., alpha=.25):
+    def loss(y_true, y_pred):
+        y_pred = K.clip(y_pred, K.epsilon(), 1. - K.epsilon())
+        import tensorflow as tf
+        pt = tf.where(tf.equal(y_true, 1), y_pred, 1 - y_pred)
+        return -K.mean(alpha * K.pow(1. - pt, gamma) * K.log(pt))
+    return loss
+
+# -------------------------------
+# CNN model (lighter regularization)
 # -------------------------------
 model = Sequential([
-    Conv1D(32, 3, activation='relu', input_shape=(10, 18)),
+    Conv1D(64, 3, activation='relu', kernel_regularizer=l2(0.0005), input_shape=(10, 18)),
     BatchNormalization(),
     MaxPooling1D(2),
-    Dropout(0.3),
+    Dropout(0.25),
+
+    Conv1D(128, 3, activation='relu', kernel_regularizer=l2(0.0005)),
+    BatchNormalization(),
+    MaxPooling1D(2),
+    Dropout(0.25),
+
     Flatten(),
-    Dense(32, activation='relu'),
-    Dropout(0.3),
+    Dense(64, activation='relu', kernel_regularizer=l2(0.0005)),
+    Dropout(0.25),
     Dense(1, activation='sigmoid')
 ])
 
-model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+model.compile(optimizer='adam', loss=focal_loss(), metrics=['accuracy', Precision(), Recall()])
 
 # -------------------------------
-# Train model
+# Train
 # -------------------------------
-early_stop = EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)
+early_stop = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
 history = model.fit(
     X_train_scaled, y_train,
@@ -65,13 +99,13 @@ model.save("models/cnn.keras")
 print("? CNN model saved to models/cnn.keras")
 
 # -------------------------------
-# Print final accuracy
+# Print metrics
 # -------------------------------
 final_acc = history.history["accuracy"][-1]
 print(f"? Final training accuracy: {round(final_acc * 100, 2)}%")
 
 # -------------------------------
-# Save training history to table
+# Save training history
 # -------------------------------
 os.makedirs("results", exist_ok=True)
 with open("results/cnn_training_log.csv", "w", newline="") as f:
@@ -87,7 +121,7 @@ with open("results/cnn_training_log.csv", "w", newline="") as f:
         ])
 
 # -------------------------------
-# Save model architecture summary
+# Save model architecture
 # -------------------------------
 with open("results/cnn_architecture.csv", "w", newline="") as f:
     with io.StringIO() as buf, redirect_stdout(buf):

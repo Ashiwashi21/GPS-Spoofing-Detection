@@ -23,6 +23,6 @@
 23. Test the first model: read from the test subset, predict, and activate the status LED (on for spoofed, off for not spoofed) .
 24. Record prediction, actual classification, and calculate confusion matrix and F1 score and accuracy score.
 25. Repeat testing procedures (steps 23-24) for the second model using the same test data.
-26. Repeat the entire process (steps 10-25 except 16, 20, 22; data collection, training, testing) 5 times. Gather new sets of normal and simulated spoofed data for each repetition .
+26. Repeat the entire process of testing (collect + process data) 5 times. Gather new sets of normal and simulated spoofed data for each repetition .
 27. Save all calculated evaluation metrics after each complete cycle . Consolidate all metrics into a single dataset .
 28. Compute average F1 score and standard deviation for each model across all repetitions. Analyze averages and data trends.

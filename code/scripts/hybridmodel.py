@@ -6,8 +6,11 @@ from contextlib import redirect_stdout
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout, BatchNormalization
 from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.regularizers import l2
+from tensorflow.keras.metrics import Precision, Recall
 from sklearn.preprocessing import StandardScaler
 from ekf import ExtendedKalmanFilter
+import tensorflow.keras.backend as K
 
 # -------------------------------
 # Load training data
@@ -22,11 +25,24 @@ if pad_width > 0:
     X_train = np.concatenate([X_train, padding], axis=2)
 
 # -------------------------------
-# Scale features
+# Small label noise (5%)
+# -------------------------------
+noise_ratio = 0.05
+num_noisy = int(len(y_train) * noise_ratio)
+noisy_indices = np.random.choice(len(y_train), num_noisy, replace=False)
+y_train[noisy_indices] = 1 - y_train[noisy_indices]
+
+# -------------------------------
+# Scale + input noise augmentation
 # -------------------------------
 scaler = StandardScaler()
 X_train_flat = X_train.reshape(-1, 18)
 X_train_scaled = scaler.fit_transform(X_train_flat).reshape(X_train.shape)
+
+noise = np.random.normal(0, 0.05, size=X_train_scaled.shape)
+scale = np.random.uniform(0.97, 1.03, size=(X_train_scaled.shape[0], 1, X_train_scaled.shape[2]))
+mask = np.random.binomial(1, 0.99, size=X_train_scaled.shape)
+X_train_scaled = X_train_scaled * scale * mask + noise
 
 # -------------------------------
 # EKF Setup
@@ -51,25 +67,42 @@ X_train_ekf = apply_ekf_batch(X_train_scaled)
 X_train_combined = np.concatenate([X_train_scaled, X_train_ekf], axis=-1)
 
 # -------------------------------
-# Build CNN model (same as original)
+# Focal loss
+# -------------------------------
+def focal_loss(gamma=2., alpha=.25):
+    def loss(y_true, y_pred):
+        y_pred = K.clip(y_pred, K.epsilon(), 1. - K.epsilon())
+        import tensorflow as tf
+        pt = tf.where(tf.equal(y_true, 1), y_pred, 1 - y_pred)
+        return -K.mean(alpha * K.pow(1. - pt, gamma) * K.log(pt))
+    return loss
+
+# -------------------------------
+# CNN model
 # -------------------------------
 model = Sequential([
-    Conv1D(32, 3, activation='relu', input_shape=(10, X_train_combined.shape[2])),
+    Conv1D(64, 3, activation='relu', kernel_regularizer=l2(0.0005), input_shape=(10, X_train_combined.shape[2])),
     BatchNormalization(),
     MaxPooling1D(2),
-    Dropout(0.3),
+    Dropout(0.25),
+
+    Conv1D(128, 3, activation='relu', kernel_regularizer=l2(0.0005)),
+    BatchNormalization(),
+    MaxPooling1D(2),
+    Dropout(0.25),
+
     Flatten(),
-    Dense(32, activation='relu'),
-    Dropout(0.3),
+    Dense(64, activation='relu', kernel_regularizer=l2(0.0005)),
+    Dropout(0.25),
     Dense(1, activation='sigmoid')
 ])
 
-model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+model.compile(optimizer='adam', loss=focal_loss(), metrics=['accuracy', Precision(), Recall()])
 
 # -------------------------------
 # Train model
 # -------------------------------
-early_stop = EarlyStopping(monitor='val_loss', patience=2, restore_best_weights=True)
+early_stop = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
 history = model.fit(
     X_train_combined, y_train,
@@ -85,7 +118,7 @@ history = model.fit(
 # -------------------------------
 os.makedirs("models", exist_ok=True)
 model.save("models/hybrid.keras")
-print("? EKF-enhanced CNN model saved to models/cnn_ekf.keras")
+print("? EKF-enhanced CNN model saved to models/hybrid.keras")
 
 # -------------------------------
 # Print final training accuracy
