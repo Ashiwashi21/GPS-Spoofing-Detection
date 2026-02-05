@@ -71,3 +71,35 @@ fig.savefig(fig_path, dpi=200)
 plt.close(fig)
 
 print("Plot saved to", fig_path)
+def plot_spoofed_sensor(columns, title, filename, ylabel):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for col in columns:
+        if col not in spoofed.columns:
+            print(f"Skipping {col} � missing in spoofed.csv")
+            continue
+        ax.plot(spoofed[col], label=col)
+    ax.set_title(title)
+    ax.set_xlabel("Row Index")
+    ax.set_ylabel(ylabel)
+    ax.legend()
+    ax.grid(True, linestyle="--", alpha=0.5)
+    fig.tight_layout()
+    fig.savefig(out_dir / filename, dpi=200)
+    plt.close(fig)
+
+# Accelerometer (spoofed only)
+plot_spoofed_sensor(
+    columns=["accel_x", "accel_y", "accel_z"],
+    title="Spoofed Accelerometer Data",
+    filename="spoofed_accel.png",
+    ylabel="Acceleration (m/s�)"
+)
+
+# Gyroscope (spoofed only)
+plot_spoofed_sensor(
+    columns=["gyro_x", "gyro_y", "gyro_z"],
+    title="Spoofed Gyroscope Data",
+    filename="spoofed_gyro.png",
+    ylabel="Angular Velocity (rad/s)"
+)
+
