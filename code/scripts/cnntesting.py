@@ -1,3 +1,4 @@
+#goal of this script: test the cnn-only model, get performance metrics
 import os
 import numpy as np
 import pandas as pd
@@ -9,7 +10,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 from sklearn.model_selection import StratifiedKFold
 
-# --- config ---
 PAD_TO = 18
 NUM_FOLDS = 5
 RANDOM_STATE = 42
@@ -32,8 +32,6 @@ def focal_loss(gamma=2., alpha=.25):
 
 model = load_model("models/cnn.keras", custom_objects={"loss": focal_loss()})
 
-
-# --- load training data ---
 X_train = np.load("sensor-data/processed/X_train.npy")
 y_train = np.load("sensor-data/processed/y_train.npy")
 pad_width = PAD_TO - X_train.shape[2]
@@ -47,7 +45,6 @@ def signature(x):
     return tuple(np.round(x.flatten(), 6))
 train_sigs = {signature(x) for x in X_train}
 
-# --- load test sets ---
 tests, labels = [], []
 for i in range(1, 6):
     xt = np.load(f"sensor-data/processed/X_test_{i}.npy")
@@ -61,7 +58,6 @@ for i in range(1, 6):
 X_all = np.concatenate(tests, axis=0)
 y_all = np.concatenate(labels, axis=0)
 
-# remove duplicates
 keep_mask = np.array([signature(x) not in train_sigs for x in X_all])
 if not keep_mask.all():
     removed = np.sum(~keep_mask)
@@ -85,7 +81,6 @@ def corrupt(X, params):
     Xc *= scales
     return Xc
 
-# --- evaluation ---
 skf = StratifiedKFold(n_splits=NUM_FOLDS, shuffle=True, random_state=RANDOM_STATE)
 fold_idx = 0
 agg_cm = np.zeros((2, 2), int)
@@ -100,6 +95,7 @@ for _, test_index in skf.split(X_all, y_all):
 
     Xc = corrupt(X_fold, CORRUPT_PARAMS)
     Xs = scaler.transform(Xc.reshape(-1, PAD_TO)).reshape(Xc.shape)
+    #actual testing part
     y_scores = model.predict(Xs, verbose=0).flatten()
     y_pred = (y_scores > 0.5).astype(int)
 
@@ -112,7 +108,6 @@ for _, test_index in skf.split(X_all, y_all):
     accs.append(acc)
     f1s.append(f1)
 
-    # confusion matrix plot
     plt.figure(figsize=(5, 4))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=[0, 1], yticklabels=[0, 1])
     plt.title(f"CNN Confusion - Fold {fold_idx}")
@@ -120,13 +115,11 @@ for _, test_index in skf.split(X_all, y_all):
     plt.savefig(os.path.join(RESULTS_DIR, f"cnn_fold_{fold_idx}_cm.png"))
     plt.close()
 
-    # save corrupted fold data
     flat_Xc = Xc.reshape(Xc.shape[0], -1)
     df_corr = pd.DataFrame(flat_Xc)
     df_corr['label'] = y_fold
     df_corr.to_csv(os.path.join(RESULTS_DIR, f"cnn_fold_{fold_idx}.csv"), index=False)
 
-# --- aggregate results ---
 if accs:
     plt.figure(figsize=(6, 4))
     sns.heatmap(agg_cm, annot=True, fmt='d', cmap='Blues', xticklabels=[0, 1], yticklabels=[0, 1])
@@ -138,7 +131,6 @@ if accs:
     df_metrics = pd.DataFrame(metrics_log, columns=['fold', 'accuracy', 'f1'])
     df_metrics.to_csv(os.path.join(RESULTS_DIR, "cnn_fold_metrics.csv"), index=False)
 
-# --- conv1d weight distribution ---
 layer = model.get_layer(index=0)
 weights = layer.get_weights()[0].flatten()
 
@@ -151,7 +143,6 @@ plt.tight_layout()
 plt.savefig(os.path.join(RESULTS_DIR, "cnn_conv1d_weight_distribution.png"))
 plt.close()
 
-# --- mean abs weight per kernel ---
 mean_abs = np.mean(np.abs(layer.get_weights()[0]), axis=(0, 1))
 plt.figure(figsize=(8, 4))
 plt.bar(range(len(mean_abs)), mean_abs)
@@ -162,7 +153,6 @@ plt.tight_layout()
 plt.savefig(os.path.join(RESULTS_DIR, "cnn_conv1d_weights_mean_abs.png"))
 plt.close()
 
-# --- training curves ---
 df_log = pd.read_csv("results/cnn_training_log.csv")
 
 plt.figure(figsize=(6, 4))

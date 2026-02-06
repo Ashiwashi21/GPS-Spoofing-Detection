@@ -1,3 +1,5 @@
+#goal of this script: create and train a cnn on sensor windows, apply noise, and save model with metrics
+#imports
 import numpy as np
 import os
 import csv
@@ -11,42 +13,34 @@ from tensorflow.keras.metrics import Precision, Recall
 from sklearn.preprocessing import StandardScaler
 import tensorflow.keras.backend as K
 
-# -------------------------------
-# Load training data
-# -------------------------------
+#load training data
 X_train = np.load("sensor-data/processed/X_train.npy")
 y_train = np.load("sensor-data/processed/y_train.npy")
 
-# Pad to 18 features if needed
+#pad feature dimension if needed
 pad_width = 18 - X_train.shape[2]
 if pad_width > 0:
     padding = np.zeros((X_train.shape[0], X_train.shape[1], pad_width))
     X_train = np.concatenate([X_train, padding], axis=2)
 
-# -------------------------------
-# Small label noise (5%)
-# -------------------------------
+#label noise (5%)
 noise_ratio = 0.05
 num_noisy = int(len(y_train) * noise_ratio)
 noisy_indices = np.random.choice(len(y_train), num_noisy, replace=False)
 y_train[noisy_indices] = 1 - y_train[noisy_indices]
 
-# -------------------------------
-# Scale + input noise augmentation
-# -------------------------------
+#normalize features
 scaler = StandardScaler()
 X_train_flat = X_train.reshape(-1, 18)
 X_train_scaled = scaler.fit_transform(X_train_flat).reshape(X_train.shape)
 
-# Slightly higher Gaussian noise, minor amplitude variation
+#add augmented noise
 noise = np.random.normal(0, 0.05, size=X_train_scaled.shape)
 scale = np.random.uniform(0.97, 1.03, size=(X_train_scaled.shape[0], 1, X_train_scaled.shape[2]))
-mask = np.random.binomial(1, 0.99, size=X_train_scaled.shape)  # 1% random feature dropout
+mask = np.random.binomial(1, 0.99, size=X_train_scaled.shape)
 X_train_scaled = X_train_scaled * scale * mask + noise
 
-# -------------------------------
-# Focal loss
-# -------------------------------
+#focal loss function, focuses more on hard-to-classify samples
 def focal_loss(gamma=2., alpha=.25):
     def loss(y_true, y_pred):
         y_pred = K.clip(y_pred, K.epsilon(), 1. - K.epsilon())
@@ -55,9 +49,7 @@ def focal_loss(gamma=2., alpha=.25):
         return -K.mean(alpha * K.pow(1. - pt, gamma) * K.log(pt))
     return loss
 
-# -------------------------------
-# CNN model (lighter regularization)
-# -------------------------------
+#build cnn model (two conv 1d layer, pooling, dropout, final output)
 model = Sequential([
     Conv1D(64, 3, activation='relu', kernel_regularizer=l2(0.0005), input_shape=(10, 18)),
     BatchNormalization(),
@@ -75,13 +67,13 @@ model = Sequential([
     Dense(1, activation='sigmoid')
 ])
 
+#compile model
 model.compile(optimizer='adam', loss=focal_loss(), metrics=['accuracy', Precision(), Recall()])
 
-# -------------------------------
-# Train
-# -------------------------------
+#early stopping incase model flattens out
 early_stop = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
+#train model using 10 epoches, 20% of data for validation
 history = model.fit(
     X_train_scaled, y_train,
     epochs=10,
@@ -91,22 +83,16 @@ history = model.fit(
     verbose=1
 )
 
-# -------------------------------
-# Save model
-# -------------------------------
+#save trained model
 os.makedirs("models", exist_ok=True)
 model.save("models/cnn.keras")
 print("? CNN model saved to models/cnn.keras")
 
-# -------------------------------
-# Print metrics
-# -------------------------------
+#print final accuracy
 final_acc = history.history["accuracy"][-1]
 print(f"? Final training accuracy: {round(final_acc * 100, 2)}%")
 
-# -------------------------------
-# Save training history
-# -------------------------------
+#save training log
 os.makedirs("results", exist_ok=True)
 with open("results/cnn_training_log.csv", "w", newline="") as f:
     writer = csv.writer(f)
@@ -120,9 +106,7 @@ with open("results/cnn_training_log.csv", "w", newline="") as f:
             round(history.history["val_loss"][i], 4)
         ])
 
-# -------------------------------
-# Save model architecture
-# -------------------------------
+#save cnn architecture
 with open("results/cnn_architecture.csv", "w", newline="") as f:
     with io.StringIO() as buf, redirect_stdout(buf):
         model.summary()

@@ -1,3 +1,5 @@
+#goal of this script: create and train a hybrid on sensor windows, apply noise, and save model with metrics
+#imports
 import numpy as np
 import os
 import csv
@@ -12,41 +14,34 @@ from sklearn.preprocessing import StandardScaler
 from ekf import ExtendedKalmanFilter
 import tensorflow.keras.backend as K
 
-# -------------------------------
-# Load training data
-# -------------------------------
+#load training data
 X_train = np.load("sensor-data/processed/X_train.npy")
 y_train = np.load("sensor-data/processed/y_train.npy")
 
-# Pad to 18 features if needed
+#pad feature dimensions
 pad_width = 18 - X_train.shape[2]
 if pad_width > 0:
     padding = np.zeros((X_train.shape[0], X_train.shape[1], pad_width))
     X_train = np.concatenate([X_train, padding], axis=2)
 
-# -------------------------------
-# Small label noise (5%)
-# -------------------------------
+#add label noise (5%)
 noise_ratio = 0.05
 num_noisy = int(len(y_train) * noise_ratio)
 noisy_indices = np.random.choice(len(y_train), num_noisy, replace=False)
 y_train[noisy_indices] = 1 - y_train[noisy_indices]
 
-# -------------------------------
-# Scale + input noise augmentation
-# -------------------------------
+#normalize features by applying standardscaler
 scaler = StandardScaler()
 X_train_flat = X_train.reshape(-1, 18)
 X_train_scaled = scaler.fit_transform(X_train_flat).reshape(X_train.shape)
 
+#add gaussian nouse, data augmentation
 noise = np.random.normal(0, 0.05, size=X_train_scaled.shape)
 scale = np.random.uniform(0.97, 1.03, size=(X_train_scaled.shape[0], 1, X_train_scaled.shape[2]))
 mask = np.random.binomial(1, 0.99, size=X_train_scaled.shape)
 X_train_scaled = X_train_scaled * scale * mask + noise
 
-# -------------------------------
-# EKF Setup
-# -------------------------------
+#ekf setup, define matrices
 F = np.eye(18)
 H = np.eye(18)
 Q = np.eye(18) * 0.01
@@ -54,6 +49,7 @@ R = np.eye(18) * 0.1
 x0 = np.zeros(18)
 P0 = np.eye(18)
 
+#apply ekf to traning windows
 ekf = ExtendedKalmanFilter(F, H, Q, R, x0, P0)
 
 def apply_ekf_batch(X):
@@ -61,14 +57,10 @@ def apply_ekf_batch(X):
 
 X_train_ekf = apply_ekf_batch(X_train_scaled)
 
-# -------------------------------
-# Combine EKF features
-# -------------------------------
+#fuse cnn and ekf
 X_train_combined = np.concatenate([X_train_scaled, X_train_ekf], axis=-1)
 
-# -------------------------------
-# Focal loss
-# -------------------------------
+#define focal loss function, focus more on hard samples
 def focal_loss(gamma=2., alpha=.25):
     def loss(y_true, y_pred):
         y_pred = K.clip(y_pred, K.epsilon(), 1. - K.epsilon())
@@ -77,9 +69,7 @@ def focal_loss(gamma=2., alpha=.25):
         return -K.mean(alpha * K.pow(1. - pt, gamma) * K.log(pt))
     return loss
 
-# -------------------------------
-# CNN model
-# -------------------------------
+#build hybrid cnn with two conv1d layers, batch, pooling, dropout, final output
 model = Sequential([
     Conv1D(64, 3, activation='relu', kernel_regularizer=l2(0.0005), input_shape=(10, X_train_combined.shape[2])),
     BatchNormalization(),
@@ -97,13 +87,13 @@ model = Sequential([
     Dense(1, activation='sigmoid')
 ])
 
+#compile model
 model.compile(optimizer='adam', loss=focal_loss(), metrics=['accuracy', Precision(), Recall()])
 
-# -------------------------------
-# Train model
-# -------------------------------
+#early stopping if accuracy plateaus 
 early_stop = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
+#train model for 10 epoches at 20% validation split
 history = model.fit(
     X_train_combined, y_train,
     epochs=10,
@@ -113,22 +103,16 @@ history = model.fit(
     verbose=1
 )
 
-# -------------------------------
-# Save model
-# -------------------------------
+#creates model folder, saves model as hybrid
 os.makedirs("models", exist_ok=True)
 model.save("models/hybrid.keras")
 print("? EKF-enhanced CNN model saved to models/hybrid.keras")
 
-# -------------------------------
-# Print final training accuracy
-# -------------------------------
+#prints final accuracy
 final_acc = history.history["accuracy"][-1]
 print(f"? Final training accuracy: {round(final_acc * 100, 2)}%")
 
-# -------------------------------
-# Save training history
-# -------------------------------
+#saves training logs
 os.makedirs("results", exist_ok=True)
 with open("results/hybrid_training_log.csv", "w", newline="") as f:
     writer = csv.writer(f)
@@ -142,9 +126,7 @@ with open("results/hybrid_training_log.csv", "w", newline="") as f:
             round(history.history["val_loss"][i], 4)
         ])
 
-# -------------------------------
-# Save model architecture summary
-# -------------------------------
+#saves model architecture
 with open("results/hybrid_architecture.csv", "w", newline="") as f:
     with io.StringIO() as buf, redirect_stdout(buf):
         model.summary()
@@ -152,4 +134,5 @@ with open("results/hybrid_architecture.csv", "w", newline="") as f:
         for line in summary_text.strip().split("\n"):
             f.write(line + "\n")
 
+#sanity check
 print("? Saved architecture and training log to results/")
